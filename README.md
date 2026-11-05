@@ -1,68 +1,118 @@
-# Even Terminal OpenCode
+# Even Terminal adapters
 
-Use OpenCode from the Terminal app on Even G2 glasses. Follow live responses,
-approve actions with your ring, and answer agents’ questions by voice.
+Use OpenCode and T3 Code from the Terminal app on Even G2 glasses. Each adapter
+runs as a separate HTTP service. Select **Claude** as the provider in the phone
+app for protocol compatibility. Each coding app keeps its configured models.
 
-## Start the bridge
+| Adapter | Default port | Live responses | History and prompts | Approvals and question replies | Interrupt |
+| --- | --- | --- | --- | --- | --- |
+| [OpenCode](adapters/opencode/README.md) | 3458 | Upstream event stream | Yes | Yes | Yes |
+| [T3 Code](adapters/t3-code/README.md) | 3459 | CLI polling | Yes | In the T3 app | In the T3 app |
 
-You need Node.js 22 or newer, a running OpenCode V2 service, and the Terminal app
-on your glasses. Run the bridge on the same computer and under the same user
-account as OpenCode so it can discover the service automatically.
+## Start an adapter
+
+Requires Node.js 22 or newer, the Terminal app on your glasses, and the coding app
+running on the same computer under your user account.
+
+1. Clone the repository and install its dependencies.
+
+   ```sh
+   git clone https://github.com/EmCousin/even-terminal-adapters.git
+   cd even-terminal-adapters
+   npm ci
+   ```
+
+2. Generate a private token. Save it and reuse it when restarting the adapter.
+
+   ```sh
+   export BRIDGE_TOKEN="$(node -p "require('node:crypto').randomBytes(32).toString('hex')")"
+   ```
+
+3. Start the adapter you want to use.
+
+   ```sh
+   npm run start:opencode
+   ```
+
+   For T3 Code, set a registered project path and a bind address reachable from
+   the phone, then start its adapter.
+
+   ```sh
+   export PROJECT_DIR=/absolute/path/to/your/project
+   export BIND_HOST=0.0.0.0
+   npm run start:t3
+   ```
+
+4. Add a host in the Terminal app on your phone. Use your computer's Tailscale IP,
+   the adapter's port, the saved token, and **Claude** as the provider.
+
+Keep Tailscale connected on the phone and computer. Keep the coding app and the
+adapter running. Traffic is HTTP, so use Tailscale or a trusted LAN. Do not expose
+these ports to the public internet. OpenCode binds to all interfaces. T3 defaults
+to loopback until you set `BIND_HOST`.
+
+## Run as Linux services
+
+The included systemd user units use the mise Node shim. If Node is installed
+another way, replace the executable path in each unit's `ExecStart`.
+
+1. Install the complete directory structure. The adapters import `shared/`, so
+   copying an individual adapter directory is insufficient. Use a real install
+   directory. Symlinked entrypoints are unsupported.
+
+   ```sh
+   install -d "$HOME/.local/lib/even-terminal-adapters"
+   cp -R adapters shared services package.json package-lock.json LICENSE \
+     "$HOME/.local/lib/even-terminal-adapters/"
+   (cd "$HOME/.local/lib/even-terminal-adapters" && npm ci --omit=dev)
+   ```
+
+2. Create private environment files in `~/.config/even-terminal/`. Use mode `0600`.
+   Existing environment files from the standalone adapters can be reused.
+
+   | File | Settings |
+   | --- | --- |
+   | `opencode.environment` | `BRIDGE_TOKEN`, optionally `PORT=3458` and `PROJECT_DIR` |
+   | `t3.environment` | `BRIDGE_TOKEN`, `PROJECT_DIR`, `BIND_HOST=0.0.0.0`, optionally `PORT=3459` and `T3_CLI` |
+
+   Set each `BRIDGE_TOKEN` to a saved random token. Set T3's `PROJECT_DIR` to an
+   absolute registered project path. Never commit environment files or tokens.
+
+3. Install and start the units for the adapters you use.
+
+   ```sh
+   install -d "$HOME/.config/systemd/user"
+   cp services/even-terminal-opencode.service services/even-terminal-t3.service \
+     "$HOME/.config/systemd/user/"
+   systemctl --user daemon-reload
+   systemctl --user enable --now even-terminal-opencode even-terminal-t3
+   ```
+
+For existing services, restart each one after replacing its unit. Ports, tokens,
+and service names stay the same, so existing phone host entries remain valid.
+Keep the old standalone install directories until you verify both hosts.
+
+Inspect a service with `systemctl --user status even-terminal-t3` or
+`journalctl --user -u even-terminal-t3 -n 30`. Substitute `opencode` for the other
+adapter. Stop an adapter with `systemctl --user disable --now even-terminal-t3`.
+
+## Development
+
+One package and lockfile cover both adapters. Provider-specific clients, protocol
+translation, and tests live under `adapters/<name>/`. SSE replay and its tests live
+under `shared/`. There is no common upstream client abstraction.
 
 ```sh
-git clone https://github.com/EmCousin/even-terminal-opencode.git
-cd even-terminal-opencode
 npm ci
-export BRIDGE_TOKEN="$(node -p "require('node:crypto').randomBytes(32).toString('hex')")"
-npm start
-```
-
-Save the token privately. Reuse it when restarting the bridge so you don’t have
-to update the phone’s host settings. Keep this process running while using the app.
-
-## Add a host in the Even companion app
-
-Open the Terminal app’s host setup on your phone and enter:
-
-| Setting | Value |
-| --- | --- |
-| Name | Any name, such as `OpenCode` |
-| Provider | **Claude** for now |
-| Host / IP | Your computer’s Tailscale IP, from `tailscale ip -4` |
-| Port | `3458` |
-| Token | The value of `BRIDGE_TOKEN` from the bridge’s shell |
-
-Choose **Claude** for compatibility with the Terminal app. The bridge still uses
-OpenCode and its configured models; this setting doesn’t select a Claude model.
-Leave `WIRE_PROVIDER` at its default, `claude`.
-
-Keep Tailscale connected on both the phone and computer. The bridge uses HTTP;
-Tailscale encrypts traffic between those devices. Don’t expose the port to the
-public internet or disable token authentication. A trusted local network also
-works, but ordinary LAN HTTP isn’t encrypted.
-
-## What works
-
-Live responses, compact tool summaries, session history, permission approvals,
-and replies to session questions. Pending questions and approvals return after
-a reconnect. A missing or invalid answer never grants permission.
-
-External sign-ins and global MCP setup forms still need the OpenCode desktop
-client.
-
-## Options and development
-
-- `PORT`: change the bridge port. Use the same port in the companion app.
-- `VERBOSE_TOOLS=true`: also show read-only tool summaries.
-- `OPENCODE_SERVICE_FILE`: override the default service discovery file,
-  `~/.local/state/opencode/service.json`.
-
-```sh
 npm test
 npm run check
 ```
 
-Tests use a mock OpenCode server and don’t interact with your real sessions.
+Use `npm run test:opencode` or `npm run test:t3` for one adapter and the shared
+replay tests. Tests use mock servers or clients. They do not change real sessions.
+
+This repository was renamed from `even-terminal-opencode`. The OpenCode Git
+history is preserved.
 
 ## License
 

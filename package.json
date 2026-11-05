@@ -1,12 +1,14 @@
 {
-  "name": "even-terminal-opencode",
+  "name": "even-terminal-adapters",
   "version": "1.0.0",
-  "description": "Even Terminal bridge for OpenCode V2 with live streaming, ring approvals and form replies",
-  "main": "bridge.mjs",
+  "description": "Even Terminal adapters for OpenCode and T3 Code",
   "scripts": {
-    "start": "node bridge.mjs",
-    "test": "node --test test/*.test.mjs",
-    "check": "node --check bridge.mjs && node --check protocol.mjs && node --check history.mjs && node --check opencode-client.mjs && node --check replay.mjs"
+    "start:opencode": "node adapters/opencode/bridge.mjs",
+    "start:t3": "node adapters/t3-code/bridge.mjs",
+    "test": "node --test adapters/*/test/*.test.mjs shared/test/*.test.mjs",
+    "test:opencode": "node --test adapters/opencode/test/*.test.mjs shared/test/*.test.mjs",
+    "test:t3": "node --test adapters/t3-code/test/*.test.mjs shared/test/*.test.mjs",
+    "check": "for file in adapters/*/*.mjs adapters/*/test/*.mjs shared/*.mjs shared/test/*.mjs; do node --check \"$file\" || exit; done"
   },
   "keywords": [],
   "author": "",

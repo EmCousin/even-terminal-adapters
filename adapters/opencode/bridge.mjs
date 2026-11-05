@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import express from "express";
 import { createOpenCodeClient, discoverConnection } from "./opencode-client.mjs";
 import { historyTranscript, createTurnFinisher } from "./history.mjs";
-import { ReplayHub, replayCursor } from "./replay.mjs";
+import { ReplayHub, replayCursor } from "../../shared/replay.mjs";
 import {
   SnapshotTranslator,
   permissionDecision,

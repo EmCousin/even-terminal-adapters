@@ -1,0 +1,43 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createBridge } from "../bridge.mjs";
+import { createClient } from "../t3-client.mjs";
+
+test("CLI uses argument arrays and never a shell", async () => {
+  let received;
+  const client = createClient({ project: "/tmp", execute: async (...args) => { received = args; return { stdout: "{}" }; } });
+  await client.send("thread-id", "$(touch /tmp/should-not-exist)");
+  assert.equal(received[1][3], "$(touch /tmp/should-not-exist)");
+});
+test("authenticated glasses routes, history, live delta, completion and fail-closed controls", async t => {
+  let data = { thread: { threadId: "thread-id", status: "running", latestRunId: "r1" }, messages: [{ role: "assistant", runId: "r1", text: "Hello" }] };
+  let sends = 0;
+  const client = { list: async () => [{ ...data.thread, title: "T3 test" }], read: async () => structuredClone(data), send: async () => { sends++; }, start: async () => ({ threadId: "new-id" }) };
+  const bridge = createBridge({ token: "test-token", client, log() {} });
+  const server = bridge.app.listen(0, "127.0.0.1"); await once(server, "listening");
+  t.after(() => { bridge.stop(); server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = (path, body) => fetch(base + path, { headers: { authorization: "Bearer test-token", "content-type": "application/json" }, ...(body ? { method: "POST", body: JSON.stringify(body) } : {}) });
+  assert.equal((await fetch(base + "/api/sessions")).status, 401);
+  assert.equal((await (await request("/api/sessions")).json()).sessions[0].id, "thread-id");
+  const history = await (await request("/api/messages?sessionId=thread-id")).json();
+  assert.equal(history.history[0].text, "Hello");
+  data.messages[0].text = "Hello glasses";
+  await bridge.snapshot("thread-id");
+  assert.equal(bridge.hub.messages.get("thread-id").find(m => m.type === "text_delta").text, " glasses");
+  data.thread.status = "completed"; await bridge.snapshot("thread-id");
+  assert.equal(bridge.hub.messages.get("thread-id").find(m => m.type === "result").text, "Hello glasses");
+  assert.equal((await request("/api/prompt", { text: "", sessionId: "thread-id" })).status, 400);
+  assert.equal((await request("/api/prompt", { text: "Continue", sessionId: "thread-id" })).status, 202);
+  assert.equal(sends, 1);
+  assert.equal((await request("/api/prompt", { text: "Start" })).status, 202);
+  assert.equal((await request("/api/messages?sessionId=thread-id&after=bad")).status, 400);
+  assert.equal((await request("/api/permission-response", { decision: "allow" })).status, 501);
+  const controller = new AbortController();
+  const stream = await fetch(base + "/api/events?sessionId=thread-id&needReplay=true", { headers: { authorization: "Bearer test-token" }, signal: controller.signal });
+  assert.match(stream.headers.get("content-type"), /text\/event-stream/);
+  const reader = stream.body.getReader(); const chunk = await reader.read();
+  assert.match(new TextDecoder().decode(chunk.value), /data:/);
+  await reader.cancel(); controller.abort();
+});

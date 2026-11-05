@@ -1,0 +1,16 @@
+[Unit]
+Description=Even Terminal (OpenCode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/even-terminal/opencode.environment
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h
+ExecStart=%h/.local/share/mise/shims/node %h/.local/lib/even-terminal-adapters/adapters/opencode/bridge.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
